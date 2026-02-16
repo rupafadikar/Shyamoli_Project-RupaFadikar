@@ -1,46 +1,57 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import os
 
 # -------------------------------------------------
 # PAGE CONFIG
 # -------------------------------------------------
 st.set_page_config(page_title="Travel Data Analyst Dashboard", layout="wide")
-
 st.title("Travel & Logistics Analysis Dashboard")
 
 # -------------------------------------------------
-# LOAD DATA FROM REPOSITORY (NO UPLOAD)
+# DATA PATH
 # -------------------------------------------------
+DATA_PATH = "travel_data.xlsx"
 
-# Place your dataset in same folder as app.py
-DATA_PATH = "Practice_Dataset_Rupa Fadikar.xlsx"
-
+# -------------------------------------------------
+# LOAD DATA (SAFE VERSION)
+# -------------------------------------------------
 @st.cache_data
 def load_data():
+    if not os.path.exists(DATA_PATH):
+        st.error("Dataset file not found. Please make sure 'travel_data.xlsx' is uploaded to the repository.")
+        return pd.DataFrame()
 
-    df = pd.read_excel(DATA_PATH)
+    try:
+        df = pd.read_excel(DATA_PATH)
 
-    # Convert Date Columns
-    date_cols = ['Journey Date', 'Booked On', 'Issued On']
+        # Convert Date Columns
+        date_cols = ['Journey Date', 'Booked On', 'Issued On']
+        for col in date_cols:
+            if col in df.columns:
+                df[col] = pd.to_datetime(df[col], errors='coerce')
 
-    for col in date_cols:
-        if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors='coerce')
+        # Lead Time Calculation
+        if 'Journey Date' in df.columns and 'Booked On' in df.columns:
+            df['Advance Days'] = (df['Journey Date'] - df['Booked On']).dt.days
 
-    # Lead Time Calculation
-    if 'Journey Date' in df.columns and 'Booked On' in df.columns:
-        df['Advance Days'] = (df['Journey Date'] - df['Booked On']).dt.days
+        return df
 
-    return df
+    except Exception as e:
+        st.error(f"Error loading data: {e}")
+        return pd.DataFrame()
 
 
 df = load_data()
 
+# Stop execution if dataframe empty
+if df.empty:
+    st.stop()
+
 # -------------------------------------------------
 # SIDEBAR FILTERS
 # -------------------------------------------------
-
 st.sidebar.header("Data Filters")
 
 if 'Status' in df.columns:
@@ -57,7 +68,6 @@ if 'Status' in df.columns:
 # -------------------------------------------------
 # KPI METRICS
 # -------------------------------------------------
-
 m1, m2, m3, m4 = st.columns(4)
 
 m1.metric("Total Bookings", len(df))
@@ -72,16 +82,19 @@ if 'Status' in df.columns:
 # -------------------------------------------------
 # VISUAL ANALYSIS
 # -------------------------------------------------
-
 col1, col2 = st.columns(2)
 
 # Booking Channels
 with col1:
     if 'Booked By' in df.columns:
-
         st.subheader("Top Booking Channels")
 
-        top_channels = df['Booked By'].value_counts().head(10).reset_index()
+        top_channels = (
+            df['Booked By']
+            .value_counts()
+            .head(10)
+            .reset_index()
+        )
         top_channels.columns = ['Channel', 'Transactions']
 
         fig1 = px.bar(
@@ -97,7 +110,6 @@ with col1:
 # Weekly Demand
 with col2:
     if 'Journey Date' in df.columns:
-
         st.subheader("Demand by Day of Week")
 
         df['Weekday'] = df['Journey Date'].dt.day_name()
@@ -107,7 +119,13 @@ with col2:
             'Thursday','Friday','Saturday','Sunday'
         ]
 
-        week_data = df['Weekday'].value_counts().reindex(day_order).reset_index()
+        week_data = (
+            df['Weekday']
+            .value_counts()
+            .reindex(day_order)
+            .fillna(0)
+            .reset_index()
+        )
         week_data.columns = ['Day','Bookings']
 
         fig2 = px.line(
@@ -122,17 +140,14 @@ with col2:
 # -------------------------------------------------
 # TABS
 # -------------------------------------------------
-
 tab1, tab2, tab3 = st.tabs(
     ["Route Analysis", "Financials", "Operational Efficiency"]
 )
 
 # Route Analysis
 with tab1:
-
-    st.subheader("Top Routes by Revenue")
-
     if 'Route' in df.columns and 'Net Amount' in df.columns:
+        st.subheader("Top Routes by Revenue")
 
         route_rev = (
             df.groupby('Route')['Net Amount']
@@ -146,12 +161,14 @@ with tab1:
 
 # Financial Analysis
 with tab2:
-
-    if 'Category' in df.columns:
-
+    if 'Category' in df.columns and 'Net Amount' in df.columns:
         st.subheader("Revenue by Category")
 
-        cat_rev = df.groupby('Category')['Net Amount'].sum().reset_index()
+        cat_rev = (
+            df.groupby('Category')['Net Amount']
+            .sum()
+            .reset_index()
+        )
 
         fig3 = px.pie(
             cat_rev,
@@ -162,11 +179,9 @@ with tab2:
 
         st.plotly_chart(fig3, use_container_width=True)
 
-# Driver Analysis
+# Operational Efficiency
 with tab3:
-
-    if 'Drivers' in df.columns:
-
+    if 'Drivers' in df.columns and 'Net Amount' in df.columns:
         st.subheader("Top Performing Drivers (by Revenue)")
 
         driver_rev = (
@@ -174,19 +189,25 @@ with tab3:
             .sum()
             .sort_values(ascending=False)
             .head(10)
+            .reset_index()
         )
 
-        st.bar_chart(driver_rev)
+        fig4 = px.bar(
+            driver_rev,
+            x='Drivers',
+            y='Net Amount',
+            color='Net Amount'
+        )
+
+        st.plotly_chart(fig4, use_container_width=True)
 
 # -------------------------------------------------
 # CHURN ANALYSIS
 # -------------------------------------------------
-
 st.divider()
 st.subheader("🚨 High-Risk Churn Passengers")
 
-if 'Phone number' in df.columns:
-
+if 'Phone number' in df.columns and 'Status' in df.columns:
     churn_data = df.groupby('Phone number').agg(
         Total_Cancellations=('Status', lambda x: (x == 'Cancel').sum()),
         Name=('Name', 'first')
@@ -195,5 +216,4 @@ if 'Phone number' in df.columns:
     high_risk = churn_data[churn_data['Total_Cancellations'] >= 2]
 
     st.write(f"Found {len(high_risk)} passengers with multiple cancellations.")
-
     st.dataframe(high_risk.head(10))
